@@ -233,3 +233,23 @@ uint32_t adapters::getsubnetMask(pcap_if_t* selected) {
      }
 
 }
+
+bool adapters::getIp(pcap_if_t* selected, uint8_t* srcIp) {
+    if (!selected || !srcIp)
+        return false;
+    for (pcap_addr_t* a = selected->addresses;
+         a != nullptr;
+         a = a->next) {
+
+        if (!a->addr || a->addr->sa_family != AF_INET)
+            continue;
+
+        auto* ipv4 = reinterpret_cast<sockaddr_in*>(a->addr);
+
+        memcpy(srcIp, &ipv4->sin_addr, 4);
+
+        return true;
+         }
+
+
+}

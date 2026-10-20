@@ -8,8 +8,7 @@
 #pragma comment(lib, "Iphlpapi.lib")
 int main() {
     SetConsoleOutputCP(CP_UTF8);
-
-    const uint8_t srcIp[4] = {172, 20, 10, 3};
+    uint8_t srcIp[4];
     const uint8_t targetIp[4] = {172, 20, 10, 1};
 
     uint32_t availableip;
@@ -49,10 +48,22 @@ int main() {
     std::cout << "Selected adapter: "
           << selected->name << std::endl;
 
-    std::cout << "Subnet Mask: "
-          << selected->addresses->netmask << std::endl;
+
+
+
 
     adapters::getMac(ptr,selected->name);
+
+    if (adapters::getIp(selected,srcIp)) {
+        printf("IP: %u.%u.%u.%u\n",
+           srcIp[0],
+           srcIp[1],
+           srcIp[2],
+           srcIp[3]);
+    }
+    else {
+        std::cerr << "ipv4 not found" << '\n';
+    }
 
     availableip=adapters::getsubnetMask(selected);
 

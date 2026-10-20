@@ -17,6 +17,8 @@ public:
     static void getMac(uint8_t *macptr, const std::string &pcapName);
 
     static uint32_t getsubnetMask(pcap_if_t* selected);
+
+    static bool getIp(pcap_if_t* selected, uint8_t* srcIp);
 };
 
 #endif // ARPSPOOF_ADAPTERS_H
