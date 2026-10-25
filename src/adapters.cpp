@@ -19,7 +19,7 @@
 
 #include "pcap/pcap.h"
 
-
+#include "Packet.h"
 #pragma comment(lib, "Iphlpapi.lib")
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -131,74 +131,119 @@ void adapters::getMac(
     uint8_t* macptr,
     const std::string& pcapName
 ) {
-    uint8_t mac[6];
+    if (!macptr)
+        return;
+
+    uint8_t* gateptr;
     const std::string prefix = R"(\Device\NPF_)";
-    ULONG bufferSize = 150000;
+
+    ULONG bufferSize = 15000;
     std::vector<unsigned char> buffer(bufferSize);
 
-    ULONG flags = GAA_FLAG_INCLUDE_PREFIX;
+    ULONG flags =
+        GAA_FLAG_INCLUDE_PREFIX |
+        GAA_FLAG_INCLUDE_GATEWAYS;
 
     DWORD result = GetAdaptersAddresses(
-        AF_UNSPEC,
+        AF_INET,
         flags,
         nullptr,
         reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data()),
         &bufferSize
     );
 
+    if (result == ERROR_BUFFER_OVERFLOW) {
+        buffer.resize(bufferSize);
+
+        result = GetAdaptersAddresses(
+            AF_INET,
+            flags,
+            nullptr,
+            reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data()),
+            &bufferSize
+        );
+    }
+
     if (result != NO_ERROR) {
         std::cerr << "GetAdaptersAddresses failed: "
-                  << result << std::endl;
-
+                  << result << '\n';
+        return;
     }
+
+    if (pcapName.rfind(prefix, 0) != 0) {
+        std::cerr << "Invalid Npcap adapter name\n";
+        return;
+    }
+
+    std::string guid = pcapName.substr(prefix.size());
 
     auto* adapter =
         reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data());
 
-    int index = 0;
-    if (pcapName.rfind(prefix, 0) == 0) {
-        std::string guid = pcapName.substr(prefix.size());
+    for (; adapter != nullptr; adapter = adapter->Next) {
 
-        for (; adapter != nullptr; adapter = adapter->Next) {
-            ++index;
-            if (_stricmp(adapter->AdapterName, guid.c_str()) == 0) {
-                std::cout << "Adapter: "
-                      << adapter->AdapterName << std::endl;
+        if (_stricmp(adapter->AdapterName, guid.c_str()) != 0)
+            continue;
 
-                std::cout << "Friendly Name: "
+        std::cout << "Adapter: "
+                  << adapter->AdapterName << '\n';
+
+        std::cout << "Friendly Name: "
                   << WideToUTF8(adapter->FriendlyName)
-                  << std::endl;
+                  << '\n';
 
-                std::cout << "MAC Length: "
-                          << adapter->PhysicalAddressLength << std::endl;
+        // Get MAC
+        if (adapter->PhysicalAddressLength != 6) {
+            std::cerr << "Invalid MAC length\n";
+            return;
+        }
 
-                std::cout << "MAC: ";
+        std::memcpy(macptr, adapter->PhysicalAddress, 6);
 
+        printf("MAC: %02x:%02x:%02x:%02x:%02x:%02x\n",
+               macptr[0], macptr[1], macptr[2],
+               macptr[3], macptr[4], macptr[5]);
 
+        // Get Default Gateway
+        bool foundGateway = false;
 
-                for (ULONG i = 0; i < adapter->PhysicalAddressLength; i++) {
-                    if (i > 0)
-                        std::cout << ':';
+        for (auto* gw = adapter->FirstGatewayAddress;
+             gw != nullptr;
+             gw = gw->Next) {
 
-                    mac[i] = adapter->PhysicalAddress[i];
+            if (!gw->Address.lpSockaddr ||
+                gw->Address.lpSockaddr->sa_family != AF_INET)
+                continue;
 
-                    std::cout << std::hex
-                              << std::setw(2)
-                              << std::setfill('0')
-                              << static_cast<unsigned int>(
-                                     adapter->PhysicalAddress[i]);
+            auto* addr = reinterpret_cast<sockaddr_in*>(
+                gw->Address.lpSockaddr
+            );
 
-                }
-                std::memcpy(macptr, mac, 6);
-                std::cout << std::dec << std::endl;
-                std::cout << "----------------------" << std::endl;
+            uint8_t gateway[4]{};
+
+            std::memcpy(gateptr, &addr->sin_addr, 4);
+
+            if (Packet::adapter.gateway != nullptr &&
+                Packet::adapter.gateway != nullptr) {
+                Packet::adapter.gateway=gateptr;
             }
 
+            printf("Default Gateway: %u.%u.%u.%u\n",
+                   gateway[0], gateway[1],
+                   gateway[2], gateway[3]);
+
+            foundGateway = true;
+            break;
         }
+
+        if (!foundGateway) {
+            std::cout << "No IPv4 Default Gateway\n";
+        }
+
+        return;
     }
 
-
-
+    std::cerr << "Adapter not found\n";
 }
 
 uint32_t adapters::getsubnetMask(pcap_if_t* selected) {
@@ -216,6 +261,7 @@ uint32_t adapters::getsubnetMask(pcap_if_t* selected) {
 
         uint8_t subnetMask[4];
         memcpy(subnetMask, &mask->sin_addr, 4);
+        memcpy(Packet::adapter.subnetMask, subnetMask, 4);
 
         printf("Mask: %u.%u.%u.%u\n",
                subnetMask[0], subnetMask[1],
@@ -231,6 +277,7 @@ uint32_t adapters::getsubnetMask(pcap_if_t* selected) {
 
 
      }
+    return 0;
 
 }
 
@@ -250,6 +297,8 @@ bool adapters::getIp(pcap_if_t* selected, uint8_t* srcIp) {
 
         return true;
          }
+    return false;
+
 
 
 }
