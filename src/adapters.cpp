@@ -134,7 +134,6 @@ void adapters::getMac(
     if (!macptr)
         return;
 
-    uint8_t* gateptr;
     const std::string prefix = R"(\Device\NPF_)";
 
     ULONG bufferSize = 15000;
@@ -206,6 +205,7 @@ void adapters::getMac(
 
         // Get Default Gateway
         bool foundGateway = false;
+        Packet::adapter.hasGateway = false;
 
         for (auto* gw = adapter->FirstGatewayAddress;
              gw != nullptr;
@@ -219,18 +219,16 @@ void adapters::getMac(
                 gw->Address.lpSockaddr
             );
 
-            uint8_t gateway[4]{};
-
-            std::memcpy(gateptr, &addr->sin_addr, 4);
-
-            if (Packet::adapter.gateway != nullptr &&
-                Packet::adapter.gateway != nullptr) {
-                Packet::adapter.gateway=gateptr;
-            }
+            std::memcpy(
+                Packet::adapter.gateway.data(),
+                &addr->sin_addr,
+                Packet::adapter.gateway.size()
+            );
+            Packet::adapter.hasGateway = true;
 
             printf("Default Gateway: %u.%u.%u.%u\n",
-                   gateway[0], gateway[1],
-                   gateway[2], gateway[3]);
+                   Packet::adapter.gateway[0], Packet::adapter.gateway[1],
+                   Packet::adapter.gateway[2], Packet::adapter.gateway[3]);
 
             foundGateway = true;
             break;

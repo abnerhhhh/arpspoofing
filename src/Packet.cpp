@@ -14,11 +14,16 @@
 #include <cstdio>
 #include <algorithm>
 Packet::Adapter Packet::adapter{};
-std::map<uint8_t, Packet::Host> Packet::arpTable{};
+std::map<uint32_t, Packet::Host> Packet::arpTable{};
 
-bool Packet::packet(pcap_if_t *selected,std::array<uint8_t, 60> packet) {
+bool Packet::packet(pcap_if_t *selected, const std::array<uint8_t, 60>& packet) {
 
 
+
+    if (!selected || !selected->name) {
+        std::cerr << "Invalid capture adapter\n";
+        return false;
+    }
 
     char errbuf[PCAP_ERRBUF_SIZE] = {};
 
@@ -29,14 +34,14 @@ bool Packet::packet(pcap_if_t *selected,std::array<uint8_t, 60> packet) {
     if (!handle) {
         std::cerr << errbuf << '\n';
 
-        return true;
+        return false;
     }
 
     if (pcap_datalink(handle) != DLT_EN10MB) {
         std::cerr << "Not an Ethernet adapter\n";
         pcap_close(handle);
 
-        return true;
+        return false;
     }
 
     // Example only: replace with the actual adapter MAC and IP.
@@ -50,18 +55,13 @@ bool Packet::packet(pcap_if_t *selected,std::array<uint8_t, 60> packet) {
         static_cast<int>(packet.size())
     );
 
-    if (result == 0) {
-
-        return false;
-
-    }
-    else {
+    if (result != 0) {
         std::cerr << pcap_geterr(handle) << '\n';
     }
 
-
-
-    return result == 0 ? 0 : 1;
+    pcap_close(handle);
+    adapter.reqhandle = nullptr;
+    return result == 0;
 }
 
 bool Packet::sendrequest(uint8_t targetIp[4]) {
@@ -98,12 +98,24 @@ bool Packet::sendrequest(uint8_t targetIp[4]) {
 
 void Packet::receivePackets() {
 
+    if (!adapter.selected || !adapter.selected->name) {
+        std::cerr << "Invalid capture adapter\n";
+        adapter.running = false;
+        return;
+    }
+
     char errbuf[PCAP_ERRBUF_SIZE]{};
-    struct pcap_pkthdr* header;
-    const u_char* packet;
+    struct pcap_pkthdr* header = nullptr;
+    const u_char* packet = nullptr;
     pcap_t* handle = pcap_open_live(
         adapter.selected->name, 65536, 0, 1000, errbuf
     );
+    if (!handle) {
+        std::cerr << "Unable to open capture adapter: " << errbuf << '\n';
+        adapter.running = false;
+        return;
+    }
+
     adapter.rechandle=handle;
     while (adapter.running.load()) {
         std::array<uint8_t, 4> ipAddr{};
@@ -164,7 +176,7 @@ void Packet::receivePackets() {
 
         std::copy_n(ip, 4, host.ip.begin());
         std::copy_n(mac, 6, host.mac.begin());
-        uint8_t id = static_cast<uint8_t>(arpTable.size() + 1);
+        uint32_t id = static_cast<uint32_t>(arpTable.size() + 1);
 
         arpTable[id] = host;
         printf("ARP Opcode: %u\n", opcode);
@@ -177,6 +189,9 @@ void Packet::receivePackets() {
             packet[22], packet[23], packet[24],
             packet[25], packet[26], packet[27]);
     }
+
+    pcap_close(handle);
+    adapter.rechandle = nullptr;
 }
 
 uint32_t Packet::scanSubnet(
@@ -215,8 +230,13 @@ uint32_t Packet::scanSubnet(
             continue;
 
 
-        if (!Packet::sendrequest(targetIp))
-            //printf("\rTarget: %u.%u.%u.%u ARP Request sent",targetIp[0],targetIp[1],targetIp[2],targetIp[3]);
+        if (!Packet::sendrequest(targetIp)) {
+            std::cerr << "Failed to send ARP request to "
+                      << static_cast<unsigned>(targetIp[0]) << '.'
+                      << static_cast<unsigned>(targetIp[1]) << '.'
+                      << static_cast<unsigned>(targetIp[2]) << '.'
+                      << static_cast<unsigned>(targetIp[3]) << '\n';
+        }
 
         std::this_thread::sleep_for(
         std::chrono::milliseconds(50)
@@ -231,6 +251,11 @@ uint32_t Packet::scanSubnet(
 }
 
 bool Packet::arprep(uint8_t target[4]) {
+
+    if (!target || !adapter.srcMac || !adapter.hasGateway) {
+        std::cerr << "Cannot build ARP reply: adapter MAC or gateway is unavailable\n";
+        return false;
+    }
 
     std::array<uint8_t, 60> packet{};
 
@@ -249,7 +274,7 @@ bool Packet::arprep(uint8_t target[4]) {
     packet[20] = 0; packet[21] = 2; // ARP Reply
 
     std::memcpy(packet.data() + 22, adapter.srcMac, 6);
-    std::memcpy(packet.data() + 28, adapter.gateway, 4);
+    std::memcpy(packet.data() + 28, adapter.gateway.data(), adapter.gateway.size());
     // Target MAC remains zero
     std::memcpy(packet.data() + 38, target, 4);
 
@@ -259,23 +284,16 @@ bool Packet::arprep(uint8_t target[4]) {
     return Packet::packet(adapter.selected, packet);
 }
 
-void Packet::arpscam(uint32_t ID) {
-    uint8_t target[4];
-    //uint8_t mac[6];
-    for (const auto& [id, host] : arpTable) {
-
-        if (static_cast<unsigned>(id)==ID) {
-            for (int i=0; i<4; i++) {
-                target[i]=host.ip[i];
-            }
-            /*for (int i=0; i<6; i++) {
-                mac[i]=host.mac[i];
-            }*/
-        }
-
+bool Packet::arpscam(uint32_t ID) {
+    const auto host = arpTable.find(ID);
+    if (host == arpTable.end()) {
+        std::cerr << "Host ID not found: " << ID << '\n';
+        return false;
     }
-    Packet::arprep(target);
 
+    uint8_t target[4]{};
+    std::copy(host->second.ip.begin(), host->second.ip.end(), target);
+    return Packet::arprep(target);
 }
 
 #include <iostream>

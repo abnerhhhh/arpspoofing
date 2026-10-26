@@ -11,14 +11,12 @@
 #pragma comment(lib, "Iphlpapi.lib")
 int main() {
     SetConsoleOutputCP(CP_UTF8);
-    uint8_t srcIp[4];
+    uint8_t srcIp[4]{};
     uint8_t targetIp[4] = {192, 168, 0, 1};
 
     uint32_t availableip;
-    uint8_t srcMac[6];
-    uint8_t Mask[4];
+    uint8_t srcMac[6]{};
     uint8_t* ptr = srcMac;
-    uint8_t* maskptr = Mask;
     uint32_t* ipptr=&availableip;
 
     char errbuf[PCAP_ERRBUF_SIZE] = {};
@@ -102,8 +100,14 @@ int main() {
 
     Sleep(1000); // 暫停 1 秒 (1000 毫秒)*/
     Packet::adapter.running = true;
-    std::thread sender(&Packet::scanSubnet,srcIp,Packet::adapter.subnetMask);
     std::thread receiver(&Packet::receivePackets);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (!Packet::adapter.running.load()) {
+        receiver.join();
+        pcap_freealldevs(devices);
+        return 1;
+    }
+    std::thread sender(&Packet::scanSubnet,srcIp,Packet::adapter.subnetMask);
 
     sender.join();  // 等待 scanSubnet() 完成
 
@@ -115,11 +119,18 @@ int main() {
     receiver.join(); // 等待接收執行緒結束
 
     Packet::printHosts();
-    uint8_t a;
-    std::cin>>a;
+    uint32_t a = 0;
+    if (!(std::cin >> a)) {
+        std::cerr << "Invalid host ID\n";
+        pcap_freealldevs(devices);
+        return 1;
+    }
 
     while (true) {
-        Packet::arpscam(a);
+        if (!Packet::arpscam(a)) {
+            break;
+        }
+
     }
 
 
@@ -127,6 +138,7 @@ int main() {
 
 
 
+    pcap_freealldevs(devices);
     return 0;
     
 }
