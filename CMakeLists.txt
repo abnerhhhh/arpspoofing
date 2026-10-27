@@ -27,9 +27,7 @@ target_link_libraries(arpspoof PRIVATE
 )
 
 if(MSVC)
-    # Compile source files as UTF-8 so Chinese comments and strings do not
-    # depend on the Windows system code page (for example Big5/950).
-    target_compile_options(arpspoof PRIVATE /W4 /permissive- /utf-8)
+    target_compile_options(arpspoof PRIVATE /W4 /permissive-)
 else()
     target_compile_options(arpspoof PRIVATE -Wall -Wextra -Wpedantic)
 endif()
